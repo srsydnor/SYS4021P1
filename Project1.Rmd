@@ -1,0 +1,652 @@
+---
+title: "Project1"
+author: "Sally Sydnor, River Robins, Grace FitzGerald, Kyle Kendall"
+date: "2023-10-11"
+output:
+  pdf_document: default
+  html_document: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Cleaning, Sourcing, Loading
+
+## Loading Libraries
+
+```{r, include =FALSE}
+# tidyverse libraries
+library(tinytex)
+library(ggplot2)
+library(readr)
+library(dplyr)
+library(stringr)
+library(GGally)
+library(psych)
+library(lattice)
+library(ggpubr)
+library(data.table)
+library(plyr)
+library(scales)
+library(grid)
+library(ggpubr)
+library(gplots)
+library(lattice)
+library(knitr)
+library(here)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(ggfortify)
+library(MASS)
+library(lindia)
+library(olsrr)
+```
+
+## Sourcing Directories
+
+```{r, include =FALSE}
+traindir <- ("~/UVA/Systems/SYS 4021 Linear Statistical Models/R/TrainData")
+sourcedir <- ("~/UVA/Systems/SYS 4021 Linear Statistical Models/R")
+
+
+# set the working directory to traindir
+setwd(traindir)
+#check the current working directory
+#it should be same as your traindir directory
+getwd()
+```
+
+## Sourcing Data
+
+```{r, include =FALSE}
+# Source AccidentInput and PCAplots
+source("AccidentInput.R")
+source("PCAplots.R")
+
+acts <- file.inputl(traindir)
+
+# Next a data frame with all accidents from all years from 2001 - 2019
+#combined data frame
+totacts <- combine.data(acts)
+```
+
+## Cleaning
+
+```{r, include =FALSE}
+# For ACCDMG
+dmgbox <- ggplot(totacts, aes(y=ACCDMG)) + geom_boxplot()
+#dmgbox
+
+# find only those above the upper whisker
+upper <- ggplot_build(dmgbox)$data[[1]]$ymax
+xdmg <- totacts[totacts$ACCDMG > upper,]
+
+# For Casualties (TOTINJ + TOTKLD)
+
+xdmg$Casualties <- xdmg$TOTINJ + xdmg$TOTKLD
+
+# Remove 9/11
+xdmg <- xdmg[-181,]
+
+
+```
+
+```{r, include =FALSE}
+# Remove duplicates
+xdmgnd <- xdmg[!(duplicated(xdmg[, c("INCDTNO", "YEAR", "MONTH", "DAY", "TIMEHR", "TIMEMIN")])),]
+
+#Reset rownames (observation #s) for sequential numbering- otherwise they will remain the #s from totacts
+
+rownames(xdmgnd) <- NULL
+```
+
+```{r, include =TRUE, tidy = TRUE}
+#categorical variable setup
+
+xdmgnd$TYPE <- factor(xdmgnd$TYPE, labels = c("Derailment", "HeadOn", 
+                "Rearend", "Side", "Raking", "BrokenTrain", "Hwy-Rail", 
+                  "GradeX", "Obstruction", "Explosive", "Fire","Other",
+                  "SeeNarrative" ))
+
+xdmgnd$TYPEQ <- factor(xdmgnd$TYPEQ, labels = c("NA", "Freight", "Passenger", "Commuter", 
+                    "Work",  "Single", "CutofCars", "Yard", "Light", "Maint",
+                  "MaintOfWay", "Passenger", "Commuter", "ElectricMulti", "ElectricMulti"))
+
+xdmgnd$WEATHER <- factor(xdmgnd$WEATHER, labels = c("Clear", "Cloudy", "Rain", "Fog", "Sleet", "Snow"))
+
+xdmgnd$Cause <- rep(NA, nrow(xdmgnd))
+
+xdmgnd$Cause[which(substr(xdmgnd$CAUSE, 1, 1) == "M")] <- "M"
+xdmgnd$Cause[which(substr(xdmgnd$CAUSE, 1, 1) == "T")] <- "T"
+xdmgnd$Cause[which(substr(xdmgnd$CAUSE, 1, 1) == "S")] <- "S"
+xdmgnd$Cause[which(substr(xdmgnd$CAUSE, 1, 1) == "H")] <- "H"
+xdmgnd$Cause[which(substr(xdmgnd$CAUSE, 1, 1) == "E")] <- "E"
+```
+
+Create new variable: Casualty
+
+```{r, include =TRUE}
+xdmgnd$Casualty <- xdmgnd$TOTKLD + xdmgnd$TOTINJ
+table(xdmgnd$Casualty)
+
+## Build a data frame of accidents with at least one casualty
+onecas <- xdmgnd %>%
+  filter(Casualty > 0)
+onecas <- mutate(onecas, Derail = ifelse(TYPE == "Derailment", "Y", "N"))
+```
+
+# Generating Hypotheses
+
+Building off of our in-class work on extreme accidents, choose at least
+2 well-formed, actionable hypotheses for each severity metric (ACCDMG
+and Casualties) that you plan to test. Explain why the hypotheses are
+actionable and demonstrate how you arrived at each hypothesis
+(visualizations, summary statistics, and any other supporting evidence).
+Write out your null and alternative hypotheses. Consider only
+qualitative variables or the interaction between a qualitative and
+quantitative variable.
+
+## Hypothesis 1 -- ACCDMG
+
+Thoughts: Accident damage depending on train speed and tons (higher
+weight and speed = more damage)
+
+Accidents happening earlier might have more damage (we could've fixed
+previous problems)
+
+Accident damage depending on train speed and type of accident
+(derailment and high speed)
+
+Accident damage depending on weather and train speed Null hypothesis:
+Weather and train speed do not affect accident damage Alternative
+hypothesis: Accidents that occur during inclement weather (rain, sleet,
+or snow) with high speed have higher accident damage
+
+### Correlation Matrix Graph Replication
+
+```{r}
+# scatter plot of ACCDMG with ...
+pairs.panels(xdmgnd[,c("WEATHER", "VISIBLTY", "TRNSPD", "TYPE", "ACCDMG")])
+```
+
+### Further Hypothesis Development with Box Plots
+
+```{r}
+#table(xdmgnd$WEATHER)
+
+ggplot(xdmgnd, aes(x=WEATHER, y=ACCDMG))+
+  geom_boxplot()
+
+ggplot(xdmgnd, aes(x=WEATHER))+
+  geom_bar()
+
+#unique(xdmgnd$METHOD)
+
+table(xdmgnd$MOPERA)
+table(xdmgnd$SIGNAL)
+class(xdmgnd$MOPERA)
+
+
+#MOPERA
+ggplot(xdmgnd, aes(x=factor(MOPERA), y=ACCDMG))+
+  geom_boxplot()
+#SIGNAL
+ggplot(xdmgnd, aes(x=factor(SIGNAL), y=ACCDMG))+
+  geom_boxplot()
+
+#finding accdmg median with respect to SIGNAL
+medianacc <- xdmgnd %>%
+  group_by(SIGNAL) %>%
+  summarize(meddmg = median(ACCDMG))
+medianacc
+
+test2 <- xdmgnd %>%
+  group_by(METHOD) %>%
+  summarize(avgdmg = mean(ACCDMG)) %>%
+  arrange(desc(avgdmg))
+test2
+
+```
+
+### Null Hypothesis & Alternative Hypothesis
+
+Accident damage depends on train speed and if it was signaled
+
+Null hypothesis: Accidents occurring at high speeds in non-signaled
+territories do not result in more damage than those at high speeds in
+signaled territories Alternative hypothesis: Accidents occurring at high
+speeds in non-signaled territories result in more damage than those at
+high speeds in signaled territories
+
+## Hypothesis 2 -- Casualties
+
+### Correlation Matrix Graph Replication
+
+```{r}
+# scatter plot of Casualties with ...
+pairs.panels(xdmgnd[,c("WEATHER", "VISIBLTY", "TRNSPD", "TYPE", "Casualties")])
+```
+
+### Further Hypothesis Development with Box Plots
+
+```{r}
+
+ggplot(xdmgnd, aes(x=WEATHER, y=Casualties))+
+  geom_boxplot()
+
+ggplot(xdmgnd, aes(x=WEATHER))+
+  geom_bar()
+```
+
+### Null Hypothesis & Alternative Hypothesis
+
+There are more casualties during derailments at high speeds
+
+Null hypothesis: Alternative hypothesis:
+
+# ACCDMG Analysis
+
+## Hypothesis 1: Accidents occurring at high speeds in non-signaled territories do not result in more damage than those at high speeds in signaled territories.
+
+## A) The feature and model selection techniques you used to find appropriate models for this problem
+
+Build linear model to test hypothesis
+
+```{r}
+# regular model
+accdmg.lm1<-lm(ACCDMG~TRNSPD + SIGNAL,data=xdmgnd)
+summary(accdmg.lm1)
+# interaction model
+accdmg.lm2 <- lm(ACCDMG ~ (TRNSPD + SIGNAL)^2, data = xdmgnd)
+summary(accdmg.lm2)
+# complete interaction model
+accdmg.lm3 <- lm(ACCDMG~(TRNSPD+SIGNAL)^2+I(TRNSPD^2)+I(SIGNAL^2),data=xdmgnd)
+summary(accdmg.lm3)
+# step model
+accdmg.lm4 <- step(accdmg.lm3)
+summary(accdmg.lm4)
+```
+
+## (b) Your treatment of ordinal and categorical variables (i.e., how were they coded)
+
+```{r}
+# TRNSPD: interval variables
+# SIGNAL: binary variable
+```
+
+## (c) How you assessed your models (e.g., adjusted R2, AIC, etc.)
+
+```{r}
+AIC(accdmg.lm1)
+AIC(accdmg.lm2)
+AIC(accdmg.lm3)
+AIC(accdmg.lm4)
+
+summary(accdmg.lm1)$adj.r.squared
+summary(accdmg.lm2)$adj.r.squared
+summary(accdmg.lm3)$adj.r.squared
+summary(accdmg.lm4)$adj.r.squared
+
+# models 3 and 4 have the smallest AIC value
+# models 3 and 4 have the largest adjusted R squared values
+
+```
+
+## (d) How you diagnosed problems with the models
+
+```{r}
+# cook's distance
+autoplot(accdmg.lm1, which=4, ncol = 1, label.size = 3) + theme_bw() #Cook's distance
+autoplot(accdmg.lm2, which=4, ncol = 1, label.size = 3) + theme_bw() #Cook's distance
+autoplot(accdmg.lm3, which=4, ncol = 1, label.size = 3) + theme_bw() #Cook's distance
+autoplot(accdmg.lm4, which=4, ncol = 1, label.size = 3) + theme_bw() #Cook's distance
+
+# point 5251 is above 0.5 on cook's distance plot for models 1 and 2
+# point 5251 is above 3 on cook's distance plot for models 3 and 4
+# to fix model, point 5251 should be removed
+
+```
+
+```{r}
+# residuals vs fitted
+autoplot(accdmg.lm1,which=1, ncol = 1, label.size = 3) + theme_bw()#Residual vs. Fitted
+autoplot(accdmg.lm2,which=1, ncol = 1, label.size = 3) + theme_bw()#Residual vs. Fitted
+autoplot(accdmg.lm3,which=1, ncol = 1, label.size = 3) + theme_bw()#Residual vs. Fitted
+autoplot(accdmg.lm4,which=1, ncol = 1, label.size = 3) + theme_bw()#Residual vs. Fitted
+
+# plots for 1 and 2 are similar
+# plots for 3 and 4 are same
+
+# testing for constant variance
+# Are the residuals homoscedastic
+ols_test_breusch_pagan(accdmg.lm1)
+ols_test_breusch_pagan(accdmg.lm2)
+ols_test_breusch_pagan(accdmg.lm3)
+ols_test_breusch_pagan(accdmg.lm4)
+
+# all models have a p value of 0.000, therefore we reject constant variance (assumption of constant variance is violated)
+```
+
+```{r}
+# qq plot
+autoplot(accdmg.lm1,which=2, ncol = 1, label.size = 3) + theme_bw() #QQ
+autoplot(accdmg.lm2,which=2, ncol = 1, label.size = 3) + theme_bw() #QQ
+autoplot(accdmg.lm3,which=2, ncol = 1, label.size = 3) + theme_bw() #QQ
+autoplot(accdmg.lm4,which=2, ncol = 1, label.size = 3) + theme_bw() #QQ
+
+# upper tail is non-gaussian for all models
+
+```
+
+part D cont.
+
+```{r}
+#scale location
+autoplot(accdmg.lm1,which=3, ncol = 1, label.size = 3) + theme_bw() #Scale-Location
+autoplot(accdmg.lm2,which=3, ncol = 1, label.size = 3) + theme_bw() #Scale-Location
+autoplot(accdmg.lm3,which=3, ncol = 1, label.size = 3) + theme_bw() #Scale-Location
+autoplot(accdmg.lm4,which=3, ncol = 1, label.size = 3) + theme_bw() #Scale-Location
+
+# all plots follow same shape
+```
+
+part D cont.
+
+```{r}
+# residuals vs leverage
+autoplot(accdmg.lm1,which=5,ncol = 1, label.size = 3) + theme_bw() #Redisuals vs. Leverage
+autoplot(accdmg.lm2,which=5,ncol = 1, label.size = 3) + theme_bw() #Redisuals vs. Leverage
+autoplot(accdmg.lm3,which=5,ncol = 1, label.size = 3) + theme_bw() #Redisuals vs. Leverage
+autoplot(accdmg.lm4,which=5,ncol = 1, label.size = 3) + theme_bw() #Redisuals vs. Leverage
+```
+
+part D cont.
+
+```{r}
+# Cook's distance vs leverage
+autoplot(accdmg.lm1,which=6, ncol = 1, label.size = 3) + theme_bw() #Cook's dist vs. Leverage
+autoplot(accdmg.lm2,which=6, ncol = 1, label.size = 3) + theme_bw() #Cook's dist vs. Leverage
+autoplot(accdmg.lm3,which=6, ncol = 1, label.size = 3) + theme_bw() #Cook's dist vs. Leverage
+autoplot(accdmg.lm4,which=6, ncol = 1, label.size = 3) + theme_bw() #Cook's dist vs. Leverage
+```
+
+## (e) How you adjusted the models based on these assessment
+
+adjust models
+
+```{r}
+# problems found: 
+#point with high value cook's distance (remove that point)
+xdmgnd <- xdmgnd[-5251,]
+```
+
+```{r}
+# non-constant variance / gaussian errors (transform the response)
+boxcox(accdmg.lm1) # brackets neither 0 or 1, so use optimal lambda
+
+##find max likelihood
+max(boxcox(accdmg.lm1, plotit = F)$y)
+## find best lambda value
+boxcox(accdmg.lm1, plotit = F)$x[which.max(boxcox(accdmg.lm1, plotit = F)$y)] 
+##The best lambda and store in L
+L<-boxcox(accdmg.lm1, plotit = F)$x[which.max(boxcox(accdmg.lm1, plotit = F)$y)] 
+L
+##The model with the best lambda transformation
+accdmg.lm1.boxcox<-lm((ACCDMG^L-1)/L~TRNSPD+SIGNAL,data=xdmgnd)
+
+##Display regression results for boxcox model
+summary(accdmg.lm1)
+summary(accdmg.lm1.boxcox)
+
+```
+
+part E cont.
+
+```{r}
+# non-constant variance / gaussian errors (transform the response)
+boxcox(accdmg.lm3) # brackets neither 0 or 1, so use optimal lambda
+
+##find max likelihood
+max(boxcox(accdmg.lm3, plotit = F)$y)
+## find best lambda value
+boxcox(accdmg.lm3, plotit = F)$x[which.max(boxcox(accdmg.lm3, plotit = F)$y)] 
+##The best lambda and store in L
+L<-boxcox(accdmg.lm3, plotit = F)$x[which.max(boxcox(accdmg.lm3, plotit = F)$y)] 
+L
+##The model with the best lambda transformation
+accdmg.lm3.boxcox<-lm((ACCDMG^L-1)/L~TRNSPD+SIGNAL,data=xdmgnd)
+
+##Display regression results for boxcox model
+summary(accdmg.lm3)
+summary(accdmg.lm3.boxcox)
+```
+
+## Hypothesis 2: Dusk presents the greatest damage for ACCDMG when controlling for other factors (e.g. TRNSPD)
+
+## A) The feature and model selection techniques you used to find appropriate models for this problem
+
+```{r}
+
+```
+
+## (b) Your treatment of ordinal and categorical variables (i.e., how were they coded)
+
+```{r}
+
+```
+
+## (c) How you assessed your models
+
+## (d) How you diagnosed problems with the models
+
+## (e) How you adjusted models
+
+# Casualties Analysis
+
+## Hypothesis 1: There are more casualties with trains with more passenger loads that derail
+
+## (a) The feature and model selection techniques you used to find appropriate models for this problem
+
+```{r}
+onecas %>% ggplot(aes(Casualty)) +
+  geom_boxplot()
+
+table(onecas$Derail)
+
+pairs.panels(dplyr::select(onecas, c('Casualty','HIGHSPD','CDTRMIN','LOADP1','LOADP2','TONS','CARS')))
+
+cas.lm <- lm(Casualty ~ LOADP1 + Derail + Derail*LOADP1, data = onecas)
+summary(cas.lm)
+
+plot(cas.lm)
+```
+
+## (b) Your treatment of ordinal and categorical variables (i.e., how were they coded)
+
+```{r}
+## Build a data frame of accidents with at least one casualty
+onecas <- xdmgnd %>%
+  filter(Casualty > 0)
+onecas <- mutate(onecas, Derail = ifelse(TYPE == "Derailment", "Y", "N"))
+```
+
+## (c) How you assessed your models (e.g., adjusted R2, AIC, etc.)
+
+```{r}
+AIC(cas.lm)
+```
+
+## (d) How you diagnosed problems with the models; and
+
+```{r}
+onecas_trimmed <- onecas[-c(384,210,2772,2222),]
+
+cas.lm.trimmed <- lm(Casualty ~ LOADP1 + Derail + Derail*LOADP1, data = onecas_trimmed)
+summary(cas.lm.trimmed)
+
+plot(cas.lm.trimmed)
+
+plot(cooks.distance(cas.lm.trimmed))
+
+bxcx <- boxcox(cas.lm.trimmed)
+
+bxcx$x[which.max(bxcx$y)]
+
+cas.lm.transformed <- lm((Casualty^(-1.47)-1)/(-1.47) ~ LOADP1 + Derail + Derail*LOADP1, data = onecas_trimmed)
+summary(cas.lm.transformed)
+
+plot(cas.lm.transformed)
+```
+
+## post transform (c)
+
+```{r}
+AIC(cas.lm.trimmed)
+AIC(cas.lm.transformed)
+```
+
+## (e) How you adjusted the models based on these assessment
+
+```{r}
+cas.lm.transformed <- lm((Casualty^(-1.47)-1)/(-1.47) ~ LOADP1 + Derail + Derail*LOADP1, data = onecas_trimmed)
+summary(cas.lm.transformed)
+
+plot(cas.lm.transformed)
+```
+
+Results: the interaction between derailment and loads did have a
+significant effect on casualties
+
+## Hypothesis 2: There are more casualties during derailments at high speeds
+
+## (a) The feature and model selection techniques you used to find appropriate models for this problem
+
+Linear Model
+
+```{r}
+#Models
+model1<-lm(Casualty~Derail,data=xdmgnd_derail)
+model2 <- lm(Casualty~Derail+HIGHSPD, data = xdmgnd_derail)
+model3 <-lm(Casualty~(HIGHSPD+Derail)^2,data=xdmgnd_derail)
+summary(model1)
+```
+
+## (b) Your treatment of ordinal and categorical variables (i.e., how were they coded)
+
+```{r}
+#Dummy Variable
+xdmgnd_derail <- mutate(xdmgnd, Derail = ifelse(TYPE == "Derailment", "Y", "N"))
+```
+
+## (c) How you assessed your models (e.g., adjusted R2, AIC, etc.)
+
+```{r}
+#Adjusted R^2
+summary(model1)$adj.r.squared
+summary(model2)$adj.r.squared
+summary(model3)$adj.r.squared
+#summary(model4)$adj.r.squared
+
+##AIC:
+AIC(model1)
+AIC(model2)
+AIC(model3)
+#AIC(model4)
+
+##BIC:
+BIC(model1)
+BIC(model2)
+BIC(model3)
+```
+
+## (d) How you diagnosed problems with the models; and
+
+### Model 1
+
+```{r}
+##Generate diagnostics plot one by one
+#Plot graphs individually
+
+autoplot(model1,which=1, ncol = 1, label.size = 3) + theme_bw()#Residual vs. Fitted
+
+autoplot(model1,which=2, ncol = 1, label.size = 3) + theme_bw() #QQ
+
+autoplot(model1,which=3, ncol = 1, label.size = 3) + theme_bw() #Scale-Location
+
+autoplot(model1, which=4, ncol = 1, label.size = 3) + theme_bw() #Cook's distance
+
+autoplot(model1,which=5,ncol = 1, label.size = 3) + theme_bw() #Redisuals vs. Leverage
+
+autoplot(model1,which=6, ncol = 1, label.size = 3) + theme_bw() #Cook's dist vs. Leverage
+
+# Are the residuals homoscedastic
+ols_test_breusch_pagan(model1)
+```
+
+### Model 2
+
+```{r}
+##Generate diagnostics plot one by one
+#Plot graphs individually
+
+autoplot(model2,which=1, ncol = 1, label.size = 3) + theme_bw()#Residual vs. Fitted
+
+autoplot(model2,which=2, ncol = 1, label.size = 3) + theme_bw() #QQ
+
+autoplot(model2,which=3, ncol = 1, label.size = 3) + theme_bw() #Scale-Location
+
+autoplot(model2, which=4, ncol = 1, label.size = 3) + theme_bw() #Cook's distance
+
+autoplot(model2,which=5,ncol = 1, label.size = 3) + theme_bw() #Redisuals vs. Leverage
+
+autoplot(model2,which=6, ncol = 1, label.size = 3) + theme_bw() #Cook's dist vs. Leverage
+
+# Are the residuals homoscedastic
+ols_test_breusch_pagan(model2)
+```
+
+### Model 3
+
+```{r}
+##Generate diagnostics plot one by one
+#Plot graphs individually
+
+autoplot(model3,which=1, ncol = 1, label.size = 3) + theme_bw()#Residual vs. Fitted
+
+autoplot(model3,which=2, ncol = 1, label.size = 3) + theme_bw() #QQ
+
+autoplot(model3,which=3, ncol = 1, label.size = 3) + theme_bw() #Scale-Location
+
+autoplot(model3, which=4, ncol = 1, label.size = 3) + theme_bw() #Cook's distance
+
+autoplot(model3,which=5,ncol = 1, label.size = 3) + theme_bw() #Redisuals vs. Leverage
+
+autoplot(model3,which=6, ncol = 1, label.size = 3) + theme_bw() #Cook's dist vs. Leverage
+
+# # Are the residuals homoscedastic
+ols_test_breusch_pagan(model3)
+```
+
+## (e) How you adjusted the models based on these assessment
+
+```{r}
+#Model 2 is best
+model2 <- lm(Casualty~Derail+HIGHSPD, data = xdmgnd_derail)
+plot(model2)
+
+```
+
+# Evidence Recommendation to FRA
+
+# References
+
+<https://railroads.dot.gov/divisions/security-preparedness-and-accident-analysis/fra-investigations-railroad-accidents>
+The FRA mentions that most accidents assigned for investigation fall
+into one of the following categories: rail equipment (collisions and
+derailments), highway-rail grade crossing incidents, and fatalities
+(employee and contractor). We used derailments as one of our main
+variables for making our models about accident damage and casualties.
+Since the FRA investigated accidents that had to do with derailments, it
+illustrates that derailments have a strong connection with increased
+accident damage or casualties.
